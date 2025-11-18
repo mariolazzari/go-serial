@@ -660,3 +660,292 @@ func (ms Metrics) MarshalJSON() ([]byte, error) {
 ## Protocol buffers
 
 ### Protocol buffers overview
+
+[Docs](https://protobuf.dev/)
+
+- Smchema generates code
+- Binary format
+- Many languages
+- Good ecosystem
+
+```ts
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "rides/pb";
+
+message Location {
+  double lat = 1;
+  double lng = 2;
+}
+
+enum RideType {
+  UNKNOWN = 0;
+  REGULAR = 1;
+  SHARED = 2;
+}
+
+message RideStart {
+  google.protobuf.Timestamp time = 1;
+  string car_id = 2;
+  Location location = 3;
+  RideType type = 4;
+  int64 passengers = 5;
+}
+```
+
+```go
+package rides
+
+import (
+	"fmt"
+	"time"
+)
+
+type RideType byte
+
+const (
+	RegularType RideType = iota + 1
+	SharedType
+)
+
+func (t RideType) String() string {
+	switch t {
+	case RegularType:
+		return "regular"
+	case SharedType:
+		return "shared"
+	}
+
+	return fmt.Sprintf("RideType(%d)", t)
+}
+
+type Location struct {
+	Lat float64
+	Lng float64
+}
+
+type RideStart struct {
+	Time       time.Time
+	CarID      string
+	Location   Location
+	Type       RideType
+	Passengers int
+}
+```
+
+### Generating code
+
+[Go](https://protobuf.dev/getting-started/gotutorial/)
+
+```go
+/* Tools
+
+# protoc
+
+Install via package manager (apt, brew, choco ...)
+
+# Go Protocol Buffers Plugin
+
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
+*/
+
+//go:generate mkdir -p pb
+//go:generate protoc --go_out=pb --go_opt=paths=source_relative rides.proto
+```
+
+### Using code
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"serialization/Ch04/04_03/pb"
+)
+
+func main() {
+	// Marshal
+	msg := pb.RideStart{
+		Time:  timestamppb.Now(),
+		CarId: "McQueen",
+		Location: &pb.Location{
+			Lat: 48.8737917,
+			Lng: 2.2950275,
+		},
+		Type:       pb.RideType_REGULAR,
+		Passengers: 1,
+	}
+	fmt.Println("msg :", &msg)
+
+	data, err := proto.Marshal(&msg)
+	if err != nil {
+		fmt.Println("ERROR: marshal:", err)
+		return
+	}
+	fmt.Printf("proto size: %5d\n", len(data))
+
+	// Compare size to JSON
+	jdata, err := json.Marshal(&msg)
+	if err != nil {
+		fmt.Println("ERROR: json marshal:", err)
+		return
+	}
+	fmt.Printf(" json size: %5d\n", len(jdata))
+
+	// Unmarshal
+	var msg2 pb.RideStart
+	if err := proto.Unmarshal(data, &msg2); err != nil {
+		fmt.Println("ERROR: unmarshal:", err)
+		return
+	}
+	fmt.Println("msg2:", &msg2)
+}
+```
+
+### Working with time
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func main() {
+	t := time.Date(2024, 4, 13, 17, 32, 47, 203, time.UTC)
+	fmt.Println("t :", t)
+
+	// time.Time -> timestamppb.Timestamp
+	pt := timestamppb.New(t)
+	fmt.Println("pt:", pt)
+
+	// timestamppb.Timestamp -> time.Time
+	t2 := pt.AsTime()
+	fmt.Println("t2:", t2)
+}
+```
+
+### Emitting JSON
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"serialization/Ch04/04_05/pb"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func main() {
+	msg := pb.RideStart{
+		Time:  timestamppb.Now(),
+		CarId: "McQueen",
+		Location: &pb.Location{
+			Lat: 48.8737917,
+			Lng: 2.2950275,
+		},
+		Type:       pb.RideType_REGULAR,
+		Passengers: 1,
+	}
+
+	data, err := json.MarshalIndent(&msg, "", "    ")
+	if err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+	fmt.Println(string(data))
+}
+```
+
+### Challenge
+
+```go
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"serialization/Ch04/solution/pb"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func main() {
+	// end ride message
+	// id: "aa08deb"
+	// time: 2024-04-18T07:52:31Z
+	// distance: 1.7
+	// location: 48.8737820, 2.2950183
+
+	// Save to a file called "end.pb", then load from it.
+
+	t := time.Date(2024, time.April, 18, 7, 52, 31, 0, time.UTC)
+	msg := pb.RideEnd{
+		Id:       "aa08deb",
+		Time:     timestamppb.New(t),
+		Distance: 1.7,
+		Location: &pb.Location{
+			Lat: 48.8737820,
+			Lng: 2.2950183,
+		},
+	}
+	fmt.Println("msg :", &msg)
+
+	data, err := proto.Marshal(&msg)
+	if err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+
+	const fileName = "end.pb"
+	file, err := os.Create(fileName)
+	if err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(file, bytes.NewReader(data)); err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+
+	file, err = os.Open(fileName)
+	if err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+	defer file.Close()
+
+	data, err = io.ReadAll(file)
+	if err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+
+	var msg2 pb.RideEnd
+	if err := proto.Unmarshal(data, &msg2); err != nil {
+		fmt.Println("ERROR:", err)
+		return
+	}
+
+	fmt.Println("msg2:", &msg2)
+}
+```
