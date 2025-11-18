@@ -949,3 +949,312 @@ func main() {
 	fmt.Println("msg2:", &msg2)
 }
 ```
+
+## Other serialization formats
+
+### YAML and TOML
+
+```yaml
+---
+version: 1
+
+server:
+  port: 8080
+logging:
+  level: INFO
+```
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Config struct {
+	Version int
+	Server  struct {
+		Port int
+	}
+	Logging struct {
+		Level string
+	}
+}
+
+func main() {
+	file, err := os.Open("config.yml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var cfg Config
+	dec := yaml.NewDecoder(file)
+	if err := dec.Decode(&cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%+v\n", cfg)
+}
+```
+
+[Go toml](https://pkg.go.dev/github.com/BurntSushi/toml)
+[Go viper](https://pkg.go.dev/github.com/spf13/viper)
+
+### XML
+
+[Go XML](https://pkg.go.dev/encoding/xml)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<store>
+    <item sku="m183x">
+	<name>Magic Wand</name>
+	<price>7.0</price>
+    </item>
+    <item sku="m184y">
+	<name>Invisibility Cape</name>
+	<price>13.2</price>
+    </item>
+    <item sku="m185z">
+	<name>Levitation Spell</name>
+	<price>9.3</price>
+    </item>
+</store>
+```
+
+```go
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"os"
+)
+
+type Store struct {
+	Items []struct {
+		SKU   string  `xml:"sku,attr"`
+		Name  string  `xml:"name"`
+		Price float64 `xml:"price"`
+	} `xml:"item"`
+}
+
+func main() {
+	file, err := os.Open("store.xml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var s Store
+	dec := xml.NewDecoder(file)
+	if err := dec.Decode(&s); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%+v\n", s)
+}
+```
+
+### CSV
+
+[Go cvs](https://pkg.go.dev/encoding/csv)
+[Go csvutil](https://pkg.go.dev/github.com/jszwec/csvutil)
+
+```csv
+sku,name,price (galleons)
+m183x,Magic Wand,7.0
+m184y,Invisibility Cape,13.2
+m185z,Levitation Spell,9.3
+```
+
+```go
+package main
+
+import (
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+)
+
+func main() {
+	file, err := os.Open("store.csv")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	r := csv.NewReader(file)
+	for {
+		fields, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(fields)
+	}
+}
+```
+
+### SQL
+
+[SQLite](https://pkg.go.dev/github.com/mattn/go-sqlite3)
+
+```go
+package main
+
+import (
+	"database/sql"
+	_ "embed"
+	"fmt"
+	"os"
+
+	_ "modernc.org/sqlite"
+)
+
+type Item struct {
+	SKU   string
+	Name  string
+	Price float64
+}
+
+var store = []Item{
+	{"m183x", "Magic Wand", 7.0},
+	{"m184y", "Invisibility Cape", 13.2},
+	{"m185z", "Levitation Spell", 9.3},
+}
+
+var (
+	//go:embed insert.sql
+	insertSQL string
+
+	//go:embed get.sql
+	getSQL string
+)
+
+func main() {
+	db, err := sql.Open("sqlite", "store.db")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Save
+	for _, item := range store {
+		if _, err := db.Exec(insertSQL, item.SKU, item.Name, item.Price); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Load
+	const sku = "m184y"
+	row := db.QueryRow(getSQL, sku)
+	if row.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+
+	i := Item{
+		SKU: sku,
+	}
+	if err := row.Scan(&i.Name, &i.Price); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%+v\n", i)
+}
+```
+
+### Challenge ETL
+
+```go
+package main
+
+import (
+	"database/sql"
+	_ "embed"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed insert.sql
+var insertSQL string
+
+func insert(db *sql.DB, r io.Reader) (int, error) {
+	var doc struct {
+		Logs []struct {
+			Time    time.Time `xml:"time"`
+			Level   string    `xml:"level"`
+			Message string    `xml:"message"`
+		} `xml:"log"`
+	}
+
+	dec := xml.NewDecoder(r)
+	if err := dec.Decode(&doc); err != nil {
+		return 0, err
+	}
+
+	for _, log := range doc.Logs {
+		if _, err := db.Exec(insertSQL, log.Time, log.Level, log.Message); err != nil {
+			return 0, err
+		}
+	}
+
+	return len(doc.Logs), nil
+}
+
+func main() {
+	matches, err := filepath.Glob("logs/*.xml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+
+	db, err := sql.Open("sqlite", "logs.db")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	for _, fileName := range matches {
+		file, err := os.Open(fileName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		n, err := insert(db, file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s: %d records\n", fileName, n)
+	}
+}
+```
